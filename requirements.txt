@@ -1,0 +1,8 @@
+numpy
+mdtraj
+pandas
+matplotlib
+seaborn
+einops
+torch==2.10
+torchvision
