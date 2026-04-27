@@ -219,3 +219,6 @@ __marimo__/
 
 # data
 data/
+
+# VS Code settings
+.vscode/
