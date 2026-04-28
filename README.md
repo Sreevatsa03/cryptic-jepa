@@ -4,7 +4,7 @@ we will assume for this experiment that you are running this code in a conda env
 
 we will also assume you are running this on an ARM Mac, so if you are using a different operating system, you may need to adjust some of the installation instructions for GROMACS and other dependencies, as well as the torch code to ensure it runs on cuda if you have an NVIDIA GPU.
 
-you will also have to have GROMACS installed to extract the reference structure for the metadynamics trajectory, which is necessary for the topology alignment step in `traj_verification.py`. Instructions for this are included in the script.
+you will also have to have GROMACS installed to extract the reference structure for the metadynamics trajectory, which is necessary for the topology alignment step in `traj_verification.py`. instructions for this are included in the script.
 
 if you have a Mac, use the following command to install GROMACS using Homebrew:
 
@@ -68,17 +68,20 @@ use the dataloader in your training script:
 from src.data.dataloader import create_dataloaders
 
 train_loader, val_loader = create_dataloaders(
- contact_map_path="data/eq_jepa_contact_maps.pt",
- batch_size=32,
- max_gap=50,
- jitter_std=0.01,
- val_split=0.1,
- seed=42,
+    contact_map_path="data/eq_jepa_contact_maps.pt",
+    batch_size=32,       # optimal for variance stability and VRAM
+    max_gap=50,
+    jitter_std=0.01,
+    val_split=0.1,
+    pin_memory=True,     # ensure this is True for GPU training
+    drop_last=True       # drops the final uneven batch to prevent variance spikes
 )
 ```
 
 ## training
 
-Minor Recommendations for the Training Loop
-• Loss Monitoring: Because 601 frames is a small set, watch for the training loss falling significantly lower than the validation loss. If this happens, increase jitter_std to 0.02 or 0.03.
-• Batch Size: For 597×597 matrices, a batch_size of 32 (default in dataloader.py) is a good starting point for most modern GPUs. If you hit Out-Of-Memory (OOM) errors, drop to 16.
+train the EB-JEPA model using `src/training/train.py`:
+
+```bash
+python -m src.training.train
+```
