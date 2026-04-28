@@ -22,22 +22,19 @@ eq_start_time = 40000
 def get_pocket_residue_indices(complex_pdb, ligand_resname, threshold):
     """
     Identify protein residues that are within a specified distance of the ligand in the complex structure
-     - Load the complex structure using MDTraj
-     - Select ligand atoms based on the provided residue name
-     - Compute neighboring protein atoms within the distance threshold
-     - Extract unique residue numbers of those neighboring atoms to define the pocket
-     - Return the sorted array of pocket residue numbers and the topology for downstream mapping checks
     """
     t = md.load(complex_pdb)
 
     ligand_names = set(res.name for res in t.topology.residues if not res.is_protein and not res.is_water)
     print(f"\npotential ligand residue names: {ligand_names}")
 
+    # select ligand atoms based on residue name
     print(f"\nselecting ligand atoms with resname {ligand_resname}")
     ligand_indices = t.topology.select(f"resname {ligand_resname}")
     if ligand_indices.size == 0:
         raise SystemExit(f"no ligand atoms found for resname {ligand_resname} in {complex_pdb}")
 
+    # compute neighboring protein atoms within distance threshold
     threshold_angstrom = threshold * 10
     print(f"\nidentifying protein atoms within {threshold_angstrom} angstroms of the ligand")
     protein_indices = t.topology.select("protein")
@@ -53,6 +50,7 @@ def get_pocket_residue_indices(complex_pdb, ligand_resname, threshold):
         atom = t.topology.atom(atom_idx)
         neighbor_residues.add(atom.residue.resSeq)
 
+    # define pocket residues
     pocket_residue_indices = np.array(sorted(neighbor_residues), dtype=int)
     print("\nexact PDB residue numbers for the pocket:")
     print(f"pocket_residue_indices = np.array({repr(list(pocket_residue_indices))})")
@@ -64,12 +62,10 @@ def get_pocket_residue_indices(complex_pdb, ligand_resname, threshold):
 def verify_residue_mapping(source_topology, target_topology, pocket_residue_indices, label):
     """
     Verify that the pocket residues defined by their residue numbers in the source topology can be unambiguously mapped to residues in the target topology
-     - For each pocket residue number, check if there is a corresponding residue in the target topology with the same residue number
-     - If the source topology has chain information, also check that the chain identifiers match between the source and target residues
-     - If the source topology has residue names, also check that the residue names match between the source and target residues
-     - Collect and report mismatches in residue number, chain identifier, or residue name
     """
     print(f"\nverifying residue mapping between pocket source and {label} topology")
+
+    # check that all pocket residue numbers exist in target topology and collect candidate matches
     pocket_residue_set = set(int(x) for x in pocket_residue_indices)
     pocket_residues = [
         res
@@ -77,6 +73,7 @@ def verify_residue_mapping(source_topology, target_topology, pocket_residue_indi
         if res.is_protein and res.resSeq in pocket_residue_set
     ]
 
+    # build a mapping of residue number to residues in target topology for efficient lookup
     target_res_by_resseq = {}
     for res in target_topology.residues:
         if not res.is_protein:
@@ -96,6 +93,7 @@ def verify_residue_mapping(source_topology, target_topology, pocket_residue_indi
             return str(chain_index)
         return None
 
+    # check for mismatches in residue number, chain identifier, and residue name
     mismatches = []
     for res in pocket_residues:
         candidates = target_res_by_resseq.get(res.resSeq, [])
@@ -118,6 +116,7 @@ def verify_residue_mapping(source_topology, target_topology, pocket_residue_indi
         else:
             mismatches.append(f"resSeq {res.resSeq} has multiple matches; ambiguous mapping")
 
+    # report mismatches and exit if any are found
     if mismatches:
         print(f"{label} residue mapping check failed; do not reuse pocket resSeq directly")
         for msg in mismatches[:10]:
@@ -133,8 +132,6 @@ def verify_residue_mapping(source_topology, target_topology, pocket_residue_indi
 def prepare_traj(traj):
     """
     Apply standard preprocessing steps to an MDTraj trajectory
-     - Fix periodic boundary conditions by imaging molecules back into the primary unit cell
-     - Align the trajectory to a reference frame using backbone atoms to remove global translations and rotations
     """
     print("\nfixing periodic boundary conditions")
     traj.image_molecules(inplace=True)
@@ -147,8 +144,6 @@ def prepare_traj(traj):
 def extract_patch(traj, pocket_residue_indices):
     """
     Extract a trajectory slice containing only the atoms of the pocket residues
-     - Construct an MDTraj selection string to select all non-hydrogen atoms from residues with the specified residue numbers
-     - Apply this selection to the trajectory to create a new trajectory object that contains only the pocket atoms
     """
     res_list = [str(i) for i in pocket_residue_indices]
     res_selection_string = "(resSeq " + " or resSeq ".join(res_list) + ") and element != H"
@@ -174,12 +169,6 @@ def run_metadynamics(
 ):
     """
     Load the metadynamics trajectory, verify that the pocket residues can be mapped to the trajectory topology, extract the patch trajectory, and plot the patch RMSD against the metadynamics collective variables for verification
-     - Load the metadynamics trajectory using MDTraj
-     - Prepare the trajectory by fixing periodic boundary conditions and aligning to a reference frame
-     - Verify that the pocket residues defined by their residue numbers can be mapped to residues in the trajectory topology, checking for residue number, chain identifier, and residue name matches
-     - Extract a new trajectory containing only the atoms of the pocket residues
-     - Load the COLVAR file containing the metadynamics collective variable data, and align the CV data to the trajectory timestamps
-     - Compute the RMSD of the patch trajectory to its first frame as a measure of structural deviation over time
     """
     print("testing metadynamics topology alignment")
     try:
@@ -198,7 +187,8 @@ def run_metadynamics(
             "gmx trjconv -s data/metad_S1_BAR_meta.tpr -f data/metad_S1_BAR_meta.xtc -o data/metad_S1_BAR_meta_protein.xtc"
         )
         raise SystemExit(1)
-
+    
+    # load and prepare the metadynamics trajectory
     traj = md.load(meta_xtc, top=meta_pdb_file)
     prepare_traj(traj)
 
@@ -211,6 +201,7 @@ def run_metadynamics(
         f"\nsaved patch trajectory with shape {patch_traj.xyz.shape} to {output_patch_xtc} and topology to {output_patch_topology}"
     )
 
+    # load COLVAR data and align to trajectory timestamps for verification plotting
     print("\nCOLVAR verification")
     colvar_df = pd.read_csv(colvar_file, comment="#", header=None, delimiter="\s+")
     colvar_df.columns = ["time_step", "cv1", "cv2", "bias"]
@@ -229,6 +220,7 @@ def run_metadynamics(
 
     patch_rmsd = md.rmsd(patch_traj, patch_traj, frame=0) * 10
 
+    # create a dual-axis plot of patch RMSD and COLVAR CVs over time for verification
     fig, ax1 = plt.subplots(figsize=(10, 5))
 
     color_rmsd = "tab:red"
@@ -265,12 +257,6 @@ def run_equilibrium(
 ):
     """
     Load the equilibrium trajectory, verify that the pocket residues can be mapped to the trajectory topology, extract the patch trajectory, and plot the patch RMSD over time for verification
-     - Load the equilibrium trajectory using MDTraj
-     - Prepare the trajectory by fixing periodic boundary conditions and aligning to a reference frame
-     - Verify that the pocket residues defined by their residue numbers can be mapped to residues in the trajectory topology, checking for residue number, chain identifier, and residue name matches
-     - Extract a new trajectory containing only the atoms of the pocket residues
-     - Compute the RMSD of the patch trajectory to its first frame as a measure of structural deviation over time, and plot this RMSD against the trajectory time to verify that the trajectory is stable in the expected time window
-     - Save the extracted patch trajectory and its topology to disk for downstream processing
     """
     print("\nloading rep1 equilibrium trajectory")
     traj = md.load(eq_xtc, top=eq_pdb)
@@ -278,6 +264,7 @@ def run_equilibrium(
     print("\nfixing periodic boundary conditions")
     traj.image_molecules(inplace=True)
 
+    # slice trajectory to isolate stable window and align to first frame for RMSD calculation
     print("\nslicing trajectory to isolate the 40ns-100ns stable window")
     valid_indices = np.where(traj.time >= start_time)[0]
     if valid_indices.size == 0:

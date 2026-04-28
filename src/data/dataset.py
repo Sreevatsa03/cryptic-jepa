@@ -29,14 +29,21 @@ class ContactMapPairDataset(Dataset):
 
         self.contact_maps = contact_maps.float()
         self.n_frames = contact_maps.shape[0]
+
+        # set max_gap to be at most n_frames - 1
         self.max_gap = max(0, int(max_gap))
         self.max_gap = min(self.max_gap, self.n_frames - 1)
+
+        # jitter as noisefor data augmentation
         self.jitter_std = float(jitter_std)
 
     def __len__(self):
         return self.n_frames
 
     def _sample_target_index(self, idx):
+        """
+        Sample a target index within max_gap of the given index
+        """
         if self.n_frames == 1 or self.max_gap == 0:
             return idx
 
@@ -56,6 +63,7 @@ class ContactMapPairDataset(Dataset):
         target_idx = self._sample_target_index(idx)
         target = self.contact_maps[target_idx]
 
+        # add jitter to both context and target for data augmentation
         if self.jitter_std > 0:
             context = context + torch.randn_like(context) * self.jitter_std
             target = target + torch.randn_like(target) * self.jitter_std
