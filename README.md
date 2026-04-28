@@ -59,7 +59,7 @@ after generating the contact maps with `src/data/data_processing.py`, use the da
 smoke test the dataloader on the equilibrium tensors:
 
 ```bash
-python -m src.data.dataloader_smoketest
+python -m tests.dataloader_smoketest
 ```
 
 use the dataloader in your training script:
