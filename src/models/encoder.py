@@ -80,7 +80,10 @@ class PocketEncoder(nn.Module):
 		self.layer3 = ResidualBlock(128, 256, stride=2)
         
 		self.gap = nn.AdaptiveAvgPool2d(1)
-		self.fc = nn.Linear(256, latent_dim)
+		self.fc = nn.Sequential(
+			nn.Linear(256, latent_dim),
+			nn.LayerNorm(latent_dim)
+		)
 
 	def forward(self, x):
 		x = self.stem(x)
