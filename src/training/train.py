@@ -112,7 +112,7 @@ def main():
         jitter_std=args.jitter_std,
         val_split=args.val_split,
         seed=args.seed,
-        pin_memory=True,
+        pin_memory=False, # unnecessary for mps
         drop_last=True,
     )
 
