@@ -5,6 +5,7 @@ import torch
 
 from src.data.dataloader import create_dataloaders
 from src.models.jepa_model import JEPAModel
+from src.training.loss import energy_loss, jepa_loss
 
 
 def get_device():
@@ -37,13 +38,14 @@ def train_epoch(
 
         # forward pass, compute loss, and backpropagate
         optimizer.zero_grad()
-        loss, reg_loss = model(
-            context,
-            target,
+        z_context, z_target, z_pred = model(context, target)
+        loss, reg_loss = jepa_loss(
+            z_context,
+            z_target,
+            z_pred,
             apply_reg=True,
             reg_weight=reg_weight,
             reg_gamma=reg_gamma,
-            return_reg=True,
         )
         loss.backward()
         optimizer.step()
@@ -75,7 +77,8 @@ def validate_epoch(model, loader, device):
         context = context.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 
-        energy = model(context, target, apply_reg=False)
+        z_context, z_target, z_pred = model(context, target)
+        energy = energy_loss(z_pred, z_target)
         batch_size = context.shape[0]
         total_energy += energy.item() * batch_size
         total_samples += batch_size
