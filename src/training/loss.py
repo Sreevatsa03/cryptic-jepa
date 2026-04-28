@@ -54,6 +54,10 @@ def jepa_loss(
     energy = energy_loss(z_pred, z_target)
     reg_loss = None
     if apply_reg:
-        reg_loss = variance_hinge_loss(z_context, gamma=reg_gamma)
+        var_loss = variance_hinge_loss(z_context, gamma=reg_gamma)
+        cov_loss = covariance_loss(z_context)
+        
+        # weight variance and covariance losses equally and combine
+        reg_loss = var_loss + cov_loss
         energy = energy + reg_weight * reg_loss
     return energy, reg_loss
