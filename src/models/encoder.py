@@ -43,23 +43,22 @@ class ResidualBlock(nn.Module):
 	def forward(self, x):
 		identity = x
 
-		conv1 = self.conv1(x)
-		bn1 = self.bn1(conv1)
-		relu = self.relu(bn1)
+		x = self.conv1(x)
+		x = self.bn1(x)
+		x = self.relu(x)
 
-		conv2 = self.conv2(relu)
-		bn2 = self.bn2(conv2)
+		x = self.conv2(x)
+		x = self.bn2(x)
         
         # apply projection to the identity if dimensions don't match
 		if self.proj is not None:
 			identity = self.proj(identity)
 
-		out = bn2 + identity
-		out = self.relu(out)
-		return out
+		x = x + identity
+		return self.relu(x)
 
 
-class ContextEncoder(nn.Module):
+class PocketEncoder(nn.Module):
 	def __init__(self, in_channels=1, latent_dim=128):
 		super().__init__()
 		# resnet-like architecture with 3 residual blocks
@@ -84,11 +83,10 @@ class ContextEncoder(nn.Module):
 		self.fc = nn.Linear(256, latent_dim)
 
 	def forward(self, x):
-		conv = self.stem(x)
-		rl1 = self.layer1(conv)
-		rl2 = self.layer2(rl1)
-		rl3 = self.layer3(rl2)
-		gap = self.gap(rl3)
-		flat = torch.flatten(gap, 1)
-		out = self.fc(flat)
-		return out
+		x = self.stem(x)
+		x = self.layer1(x)
+		x = self.layer2(x)
+		x = self.layer3(x)
+		x = self.gap(x)
+		x = torch.flatten(x, 1)
+		return self.fc(x)
