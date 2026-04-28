@@ -39,3 +39,46 @@ and to extract the protein-only trajectory for the metadynamics simulation:
 ```bash
 gmx trjconv -s data/metad_S1_BAR_meta.tpr -f data/metad_S1_BAR_meta.xtc -o data/metad_S1_BAR_meta_protein.xtc
 ```
+
+verify the trajectories and the residue mapping between the pocket residues and the trajectory topologies using `src/data/traj_verification.py`:
+
+```bash
+python -m src.data.traj_verification
+```
+
+preprocess the trajectories and generate contact maps in a tensor using `src/data/data_processing.py`:
+
+```bash
+python -m src.data.data_processing
+```
+
+## dataset and dataloader
+
+after generating the contact maps with `src/data/data_processing.py`, use the dataset and dataloader utilities to build JEPA context-target pairs with a max gap and optional gaussian jitter.
+
+smoke test the dataloader on the equilibrium tensors:
+
+```bash
+python -m src.data.dataloader_smoketest
+```
+
+use the dataloader in your training script:
+
+```python
+from src.data.dataloader import create_dataloaders
+
+train_loader, val_loader = create_dataloaders(
+ contact_map_path="data/eq_jepa_contact_maps.pt",
+ batch_size=32,
+ max_gap=50,
+ jitter_std=0.01,
+ val_split=0.1,
+ seed=42,
+)
+```
+
+## training
+
+Minor Recommendations for the Training Loop
+• Loss Monitoring: Because 601 frames is a small set, watch for the training loss falling significantly lower than the validation loss. If this happens, increase jitter_std to 0.02 or 0.03.
+• Batch Size: For 597×597 matrices, a batch_size of 32 (default in dataloader.py) is a good starting point for most modern GPUs. If you hit Out-Of-Memory (OOM) errors, drop to 16.

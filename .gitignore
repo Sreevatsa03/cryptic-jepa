@@ -217,8 +217,12 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# data
+# data and figures
 data/
+figures/
+
+# allow data processing scripts
+!src/data/
 
 # VS Code settings
 .vscode/
