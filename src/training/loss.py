@@ -6,7 +6,7 @@ def energy_loss(z_pred, z_target):
     Compute the mean squared error between predicted and target latent representations
     """
     diff = z_pred - z_target
-    return diff.pow(2).sum(dim=1).mean()
+    return diff.pow(2).mean()
 
 
 def variance_hinge_loss(z, gamma=1.0, eps=1e-4):
