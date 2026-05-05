@@ -19,6 +19,14 @@ eq_pdb = pocket_source_pdb
 eq_start_time = 40000
 
 
+def read_colvar_fields(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("#! FIELDS"):
+                return line.strip().split()[2:]
+    return None
+
+
 def get_pocket_residue_indices(complex_pdb, ligand_resname, threshold):
     """
     Identify protein residues that are within a specified distance of the ligand in the complex structure
@@ -203,12 +211,20 @@ def run_metadynamics(
 
     # load COLVAR data and align to trajectory timestamps for verification plotting
     print("\nCOLVAR verification")
+    fields = read_colvar_fields(colvar_file)
     colvar_df = pd.read_csv(colvar_file, comment="#", header=None, delimiter="\s+")
-    colvar_df.columns = ["time_step", "cv1", "cv2", "bias"]
+    if fields and len(fields) == colvar_df.shape[1]:
+        colvar_df.columns = fields
+    else:
+        colvar_df.columns = [f"col{i}" for i in range(colvar_df.shape[1])]
 
-    colvar_time = np.array(colvar_df["time_step"].values, dtype=np.float32)
-    cv1 = np.array(colvar_df["cv1"].values, dtype=np.float32)
-    cv2 = np.array(colvar_df["cv2"].values, dtype=np.float32)
+    time_col = "time" if "time" in colvar_df.columns else colvar_df.columns[0]
+    cv1_col = "cv1" if "cv1" in colvar_df.columns else colvar_df.columns[1]
+    cv2_col = "cv2" if "cv2" in colvar_df.columns else colvar_df.columns[2]
+
+    colvar_time = np.array(colvar_df[time_col].values, dtype=np.float32)
+    cv1 = np.array(colvar_df[cv1_col].values, dtype=np.float32)
+    cv2 = np.array(colvar_df[cv2_col].values, dtype=np.float32)
     print(f"\nloaded {len(cv1)} frames from COLVAR")
 
     traj_time = patch_traj.time

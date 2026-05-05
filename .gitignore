@@ -227,5 +227,6 @@ figures/
 # VS Code settings
 .vscode/
 
-# project plan
+# project plan and notes
 project-plan.md
+notes.md
