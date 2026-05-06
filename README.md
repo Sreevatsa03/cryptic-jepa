@@ -52,9 +52,17 @@ preprocess the trajectories and generate contact maps in a tensor using `src/dat
 python -m src.data.data_processing
 ```
 
+this will also write shared-atom topology and trajectories for downstream visualization:
+
+- `data/shared_atoms_topology.pdb`
+- `data/patch_traj_shared.xtc`
+- `data/eq_patch_traj_shared.xtc`
+
 ## dataset and dataloader
 
 after generating the contact maps with `src/data/data_processing.py`, use the dataset and dataloader utilities to build JEPA context-target pairs with a max gap and optional gaussian jitter.
+
+the goal here is to teach the model local temporal consistency in the equilibrium regime. the `max_gap` defines how far apart context/target frames can be, and `jitter_std` adds small noise to encourage robustness to thermal fluctuations.
 
 smoke test the dataloader on the equilibrium tensors:
 
@@ -62,7 +70,7 @@ smoke test the dataloader on the equilibrium tensors:
 python -m tests.dataloader_smoketest
 ```
 
-use the dataloader in your training script:
+use the dataloader in your training script if not using built-in training utilities
 
 ```python
 from src.data.dataloader import create_dataloaders
@@ -85,3 +93,133 @@ train the EB-JEPA model using `src/training/train.py`:
 ```bash
 python -m src.training.train
 ```
+
+the training objective is a JEPA prediction error with variance/covariance regularizers, using equilibrium-only data to establish a stable baseline manifold.
+
+## inference
+
+run the aligned anomaly plot (JEPA energy vs. pocket distance) using `src/inference/detect.py`:
+
+```bash
+python -m src.inference.detect
+```
+
+if you change the temporal gap or smoothing window in the script, keep those values consistent with the evaluation steps below.
+
+this plot is used to test whether the JEPA prediction error rises ahead of the pocket distance increase (a leading indicator of opening), after time alignment between the model output and the COLVAR series.
+
+the output plot is saved to:
+
+- `figures/metadynamics_anomaly.png`
+
+## evaluation
+
+### anomaly scoring
+
+compute baseline statistics from the equilibrium trajectory and z-score the metadynamics trajectory using `src/evaluation/anomaly_scorer.py`:
+
+```bash
+python -m src.evaluation.anomaly_scorer
+```
+
+important args to keep consistent across the pipeline:
+
+- `--temporal-gap` and `--smooth-window` define the baseline used for z-scores
+- the same values should be used for `two_nn` and any downstream analysis that consumes `baseline_stats.json`
+
+use `--help` to see additional options.
+
+this step establishes a quantitative anomaly signal relative to equilibrium noise and produces a list of candidate transition frames.
+
+outputs:
+
+- `data/baseline_stats.json`
+- `data/anomaly_frames.npy`
+
+### saliency mapping
+
+backpropagate the prediction error into the contact map to generate a saliency map:
+
+```bash
+python -m src.evaluation.saliency_mapping
+```
+
+if you changed `--temporal-gap` for scoring, pass the same value here.
+
+this step identifies which contact-map entries drive the anomaly score, providing atom-level attribution for the transition signal.
+
+outputs:
+
+- `data/saliency_map.npy`
+- `data/saliency_contacts.csv`
+- `data/saliency_contacts_mapped.csv`
+
+### contact filtering (phase 1)
+
+filter intra-residue pairs, aggregate residue-level contacts, and identify gate segments:
+
+```bash
+python -m src.evaluation.contact_filtering
+```
+
+outputs:
+
+- `data/contacts_filtered.csv`
+- `data/latches.csv`
+- `data/gate_residues.csv`
+- `data/gate_segments.csv`
+
+this step converts the atom-level saliency into residue-level latches and a contiguous gate region, which is easier to interpret biologically.
+
+### report plots
+
+generate report-ready figures from the saliency results:
+
+```bash
+python -m src.evaluation.saliency_plots
+```
+
+outputs:
+
+- `figures/saliency_heatmap.png`
+- `figures/saliency_latch_table.png`
+- `figures/saliency_latch_schematic.png`
+- `data/saliency_latch_table.csv`
+
+the schematic highlights gate-scaffold latches; the heatmap gives a dense pairwise view; the table is a ranked summary for narrative clarity.
+
+### two-nn intrinsic dimensionality
+
+compare baseline vs. transition intrinsic dimensionality using anomaly frames as the transition subset:
+
+```bash
+python -m src.evaluation.two_nn --standardize --use-anomaly-frames
+```
+
+if you changed `--temporal-gap` or `--smooth-window` in anomaly scoring, pass the same values here.
+use `--help` for more options.
+
+this is a quantitative sanity check on whether the transition subset occupies a different latent complexity than baseline.
+
+outputs:
+
+- `figures/two_nn_baseline_transition.png`
+- `data/two_nn_stats.csv`
+
+### pymol visualization (optional)
+
+generate a PyMOL script to visualize the gate and selected latches:
+
+```bash
+python -m src.evaluation.pymol_gate_latch --keep-latches "51-229,207-213,60-196"
+```
+
+use `--help` to see optional arguments for frames and latch selection.
+
+then run PyMOL:
+
+```bash
+pymol -cq figures/pymol_gate_latch.pml
+```
+
+this is a supporting visualization to anchor the residue-level latches back onto the 3d structure, showing how they relate to the gate region and to each other.
