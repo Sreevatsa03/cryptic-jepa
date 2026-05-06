@@ -8,17 +8,17 @@ import torch
 
 from src.data.traj_verification import read_colvar_fields
 from src.models.jepa_model import JEPAModel
+from src.training.loss import jepa_loss
 
 CONTACT_MAP_PATH = Path("data/jepa_contact_maps.pt")
-EQ_CONTACT_MAP_PATH = Path("data/eq_jepa_contact_maps.pt")
 WEIGHTS_PATH = Path("models/best_jepa.pth")
 COLVAR_PATH = Path("data/metad_S1_BAR_COLVAR")
 OUTPUT_PLOT_PATH = Path("figures/metadynamics_anomaly.png")
 
 LATENT_DIM = 128
 PREDICTOR_HIDDEN_DIM = 256
+TEMPORAL_GAP = 50
 EXPECTED_FRAMES = 10000
-BATCH_SIZE_METADYNAMICS = 128
 POCKET_DISTANCE_COL = "cv1"
 COLVAR_DISTANCE_UNIT = "nm"
 
@@ -52,28 +52,15 @@ def load_colvar_distance(path, column):
     return colvar_df[column].to_numpy(dtype=np.float32)
 
 
-def align_series(energies, distances):
-    max_len = min(len(energies), len(distances))
+def align_series(energies, distances, gap):
+    if len(distances) <= gap:
+        raise ValueError("COLVAR series is too short for the requested temporal gap")
+
+    max_len = min(len(energies), len(distances) - gap)
     energies = energies[:max_len]
-    distances = distances[:max_len]
-    frames = np.arange(max_len)
+    distances = distances[gap : gap + max_len]
+    frames = np.arange(gap, gap + max_len)
     return frames, energies, distances
-
-
-def compute_latent_distances(contact_maps, model, centroid, device, batch_size):
-    if not batch_size or batch_size <= 0 or batch_size >= contact_maps.shape[0]:
-        meta_latents = model.target_encoder(contact_maps.to(device))
-        diffs = meta_latents - centroid
-        return torch.linalg.norm(diffs, dim=1)
-
-    distances = []
-    for start in range(0, contact_maps.shape[0], batch_size):
-        batch = contact_maps[start : start + batch_size].to(device)
-        batch_latents = model.target_encoder(batch)
-        batch_distances = torch.linalg.norm(batch_latents - centroid, dim=1)
-        distances.append(batch_distances.cpu())
-
-    return torch.cat(distances, dim=0)
 
 
 def main():
@@ -81,12 +68,17 @@ def main():
 
     if not CONTACT_MAP_PATH.exists():
         raise SystemExit(f"missing contact map tensor: {CONTACT_MAP_PATH}")
-    if not EQ_CONTACT_MAP_PATH.exists():
-        raise SystemExit(f"missing contact map tensor: {EQ_CONTACT_MAP_PATH}")
     if not WEIGHTS_PATH.exists():
         raise SystemExit(f"missing model weights: {WEIGHTS_PATH}")
     if not COLVAR_PATH.exists():
         raise SystemExit(f"missing COLVAR file: {COLVAR_PATH}")
+
+    contact_maps = load_contact_maps(CONTACT_MAP_PATH)
+    n_frames = contact_maps.shape[0]
+    if n_frames < TEMPORAL_GAP + 1:
+        raise SystemExit("contact map tensor does not contain enough frames")
+    if n_frames != EXPECTED_FRAMES:
+        print(f"warning: expected {EXPECTED_FRAMES} frames, found {n_frames}")
 
     model = JEPAModel(
         in_channels=1,
@@ -98,47 +90,49 @@ def main():
     model.load_state_dict(state_dict)
     model = model.to(device)
 
-    eq_contact_maps = load_contact_maps(EQ_CONTACT_MAP_PATH)
-    eq_contact_maps = eq_contact_maps.to(device)
-
-    contact_maps = load_contact_maps(CONTACT_MAP_PATH)
-    n_frames = contact_maps.shape[0]
-    if n_frames != EXPECTED_FRAMES:
-        print(f"warning: expected {EXPECTED_FRAMES} frames, found {n_frames}")
-
+    energies = []
     with torch.no_grad():
-        eq_latents = model.target_encoder(eq_contact_maps)
-        eq_centroid = eq_latents.mean(dim=0)
-        centroid_norm = torch.linalg.norm(eq_centroid).item()
+        for t in range(n_frames - TEMPORAL_GAP):
+            context = contact_maps[t].unsqueeze(0).to(device)
+            target = contact_maps[t + TEMPORAL_GAP].unsqueeze(0).to(device)
 
-        energies = compute_latent_distances(
-            contact_maps,
-            model,
-            eq_centroid,
-            device,
-            BATCH_SIZE_METADYNAMICS,
-        )
+            z_context, z_target, z_pred = model(context, target)
+            energy, _ = jepa_loss(
+                z_context,
+                z_target,
+                z_pred,
+                apply_reg=False,
+            )
+            energies.append(energy.item())
 
-    energies = energies.detach().cpu().numpy().astype(np.float32)
-    print(f"\nequilibrium centroid L2 norm: {centroid_norm:.6f}")
-    if energies.size:
-        print(
-            "energy stats (min/mean/max): "
-            f"{energies.min():.6f} / {energies.mean():.6f} / {energies.max():.6f}"
-        )
+    raw_energies = np.array(energies, dtype=np.float32)
+    
+    # low-pass filter to Smooth the thermal noise using 100-frame rolling window
+    energies = pd.Series(raw_energies).rolling(
+        window=100, min_periods=1, center=True
+    ).mean().to_numpy()
+    
+    # # establish baseline stats from stable equilibrium phase
+    # eq_mean = smoothed_energies[:1000].mean()
+    # eq_std = smoothed_energies[:1000].std()
+    
+    # # calculate anomaly z-scores relative to equilibrium baseline
+    # z_scores = (smoothed_energies - eq_mean) / eq_std
+
+    # energies = z_scores
 
     distance_series = load_colvar_distance(COLVAR_PATH, POCKET_DISTANCE_COL)
     if COLVAR_DISTANCE_UNIT == "nm":
         distance_series = distance_series * 10.0
 
-    frames, energies, distances = align_series(energies, distance_series)
+    frames, energies, distances = align_series(energies, distance_series, TEMPORAL_GAP)
 
     os.makedirs(OUTPUT_PLOT_PATH.parent, exist_ok=True)
 
     fig, ax1 = plt.subplots(figsize=(12, 6))
     ax1.set_xlabel("Simulation frame")
-    ax1.set_ylabel("EB-JEPA latent displacement (L2)", color="tab:red", weight="bold")
-    ax1.plot(frames, energies, color="tab:red", label="Latent displacement")
+    ax1.set_ylabel("EB-JEPA energy (MSE)", color="tab:red", weight="bold")
+    ax1.plot(frames, energies, color="tab:red", label="EB-JEPA energy")
     ax1.tick_params(axis="y", labelcolor="tab:red")
 
     ax2 = ax1.twinx()
@@ -154,7 +148,7 @@ def main():
     fig.savefig(OUTPUT_PLOT_PATH, dpi=300)
     plt.close(fig)
 
-    print(f"\nsaved anomaly plot to {OUTPUT_PLOT_PATH}")
+    print(f"saved anomaly plot to {OUTPUT_PLOT_PATH}")
 
 
 if __name__ == "__main__":
