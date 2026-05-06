@@ -42,7 +42,6 @@ def compute_mse_series(coords, model, device, temporal_gap, batch_size):
     n_frames = coords.shape[0]
     if n_frames <= temporal_gap:
         raise ValueError("trajectory is too short for the temporal gap")
-
     energies = []
     max_start = n_frames - temporal_gap
     for start in range(0, max_start, batch_size):
@@ -149,7 +148,7 @@ def main():
         action="store_true",
         help="force recomputation of baseline stats",
     )
-    parser.add_argument("--temporal-gap", type=int, default=50)
+    parser.add_argument("--temporal-gap", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--latent-dim", type=int, default=128)
     parser.add_argument("--predictor-hidden-dim", type=int, default=256)
@@ -195,6 +194,8 @@ def main():
     else:
         eq_traj = load_trajectory(args.eq_xtc, args.eq_pdb)
         eq_coords = torch.tensor(eq_traj.xyz, dtype=torch.float32)
+
+        print(f"computing MSE series for equilibrium trajectory with temporal gap={args.temporal_gap} and batch size={args.batch_size}")
         eq_mse = compute_mse_series(
             eq_coords,
             model,
@@ -220,6 +221,8 @@ def main():
     # compute MSE series for metadynamics trajectory and calculate z-scores relative to baseline
     meta_traj = load_trajectory(args.meta_xtc, args.meta_pdb)
     meta_coords = torch.tensor(meta_traj.xyz, dtype=torch.float32)
+
+    print(f"computing MSE series for metadynamics trajectory with temporal gap={args.temporal_gap} and batch size={args.batch_size}")
     meta_mse = compute_mse_series(
         meta_coords,
         model,
