@@ -76,6 +76,23 @@ def main(eq_xtc, eq_pdb, meta_xtc, meta_pdb, eq_out, meta_out):
     print(f"loading metadynamics patch trajectory from {meta_xtc}")
     meta_traj = md.load(meta_xtc, top=meta_pdb)
 
+    eq_step = eq_traj.timestep
+    meta_step = meta_traj.timestep
+    print(f"\ntimesteps: eq={eq_step} ps, meta={meta_step} ps")
+
+    if eq_step != meta_step:
+        target_step = max(eq_step, meta_step)
+        
+        if eq_step < target_step:
+            stride = int(target_step / eq_step)
+            print(f"downsampling equilibrium trajectory by a factor of {stride} to match {target_step} ps")
+            eq_traj = eq_traj[::stride]
+            
+        elif meta_step < target_step:
+            stride = int(target_step / meta_step)
+            print(f"downsampling metadynamics trajectory by a factor of {stride} to match {target_step} ps")
+            meta_traj = meta_traj[::stride]
+
     eq_indices, meta_indices = aligned_atom_indices(eq_traj.topology, meta_traj.topology)
     print(
         f"\nusing {len(eq_indices)} shared atoms to enforce matching tensor shapes "

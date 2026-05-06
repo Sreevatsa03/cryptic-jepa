@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ..src.data.dataloader import create_dataloaders
+from src.data.dataloader import create_dataloaders
 
 
 def main():

@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import mdtraj as md
 import numpy as np
 import pandas as pd
 import torch
@@ -11,14 +12,17 @@ from src.models.jepa_model import JEPAModel
 from src.training.loss import jepa_loss
 
 CONTACT_MAP_PATH = Path("data/jepa_contact_maps.pt")
+META_XTC_PATH = Path("data/patch_traj.xtc")
+META_PDB_PATH = Path("data/patch_topology.pdb")
 WEIGHTS_PATH = Path("models/best_jepa.pth")
 COLVAR_PATH = Path("data/metad_S1_BAR_COLVAR")
 OUTPUT_PLOT_PATH = Path("figures/metadynamics_anomaly.png")
 
 LATENT_DIM = 128
 PREDICTOR_HIDDEN_DIM = 256
-TEMPORAL_GAP = 50
-EXPECTED_FRAMES = 10000
+TEMPORAL_GAP = 10
+EXPECTED_FRAMES = 2000
+SMOOTH_WINDOW = 20
 POCKET_DISTANCE_COL = "cv1"
 COLVAR_DISTANCE_UNIT = "nm"
 
@@ -38,7 +42,7 @@ def load_contact_maps(path):
     return contact_maps.float()
 
 
-def load_colvar_distance(path, column):
+def load_colvar_distance(path, column, traj_time):
     fields = read_colvar_fields(path)
     colvar_df = pd.read_csv(path, comment="#", header=None, delimiter="\s+")
     if fields and len(fields) == colvar_df.shape[1]:
@@ -46,10 +50,16 @@ def load_colvar_distance(path, column):
     else:
         colvar_df.columns = [f"col{i}" for i in range(colvar_df.shape[1])]
 
+    time_col = "time" if "time" in colvar_df.columns else colvar_df.columns[0]
+
     if column not in colvar_df.columns:
         raise ValueError(f"column '{column}' not found in COLVAR file")
 
-    return colvar_df[column].to_numpy(dtype=np.float32)
+    colvar_time = colvar_df[time_col].to_numpy(dtype=np.float32)
+    distance_series = colvar_df[column].to_numpy(dtype=np.float32)
+
+    interpolated = np.interp(traj_time, colvar_time, distance_series)
+    return interpolated.astype(np.float32)
 
 
 def align_series(energies, distances, gap):
@@ -68,6 +78,10 @@ def main():
 
     if not CONTACT_MAP_PATH.exists():
         raise SystemExit(f"missing contact map tensor: {CONTACT_MAP_PATH}")
+    if not META_XTC_PATH.exists():
+        raise SystemExit(f"missing trajectory: {META_XTC_PATH}")
+    if not META_PDB_PATH.exists():
+        raise SystemExit(f"missing topology: {META_PDB_PATH}")
     if not WEIGHTS_PATH.exists():
         raise SystemExit(f"missing model weights: {WEIGHTS_PATH}")
     if not COLVAR_PATH.exists():
@@ -106,10 +120,10 @@ def main():
             energies.append(energy.item())
 
     raw_energies = np.array(energies, dtype=np.float32)
-    
-    # low-pass filter to Smooth the thermal noise using 100-frame rolling window
+
+    # low-pass filter to smooth the thermal noise with a short rolling window
     energies = pd.Series(raw_energies).rolling(
-        window=100, min_periods=1, center=True
+        window=SMOOTH_WINDOW, min_periods=1, center=True
     ).mean().to_numpy()
     
     # # establish baseline stats from stable equilibrium phase
@@ -121,10 +135,22 @@ def main():
 
     # energies = z_scores
 
-    distance_series = load_colvar_distance(COLVAR_PATH, POCKET_DISTANCE_COL)
+    # downsample colvar distance series to match energy series length
+    meta_traj = md.load(str(META_XTC_PATH), top=str(META_PDB_PATH))
+    traj_time = meta_traj.time
+    if len(traj_time) != n_frames:
+        if len(traj_time) % n_frames == 0:
+            stride = len(traj_time) // n_frames
+            traj_time = traj_time[::stride]
+        else:
+            step = (traj_time[-1] - traj_time[0]) / max(n_frames - 1, 1)
+            traj_time = np.arange(n_frames, dtype=np.float32) * step + traj_time[0]
+
+    distance_series = load_colvar_distance(COLVAR_PATH, POCKET_DISTANCE_COL, traj_time)
     if COLVAR_DISTANCE_UNIT == "nm":
         distance_series = distance_series * 10.0
 
+    # align energy and distance series based on temporal gap used for prediction
     frames, energies, distances = align_series(energies, distance_series, TEMPORAL_GAP)
 
     os.makedirs(OUTPUT_PLOT_PATH.parent, exist_ok=True)

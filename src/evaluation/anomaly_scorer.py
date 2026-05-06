@@ -149,15 +149,15 @@ def main():
         action="store_true",
         help="force recomputation of baseline stats",
     )
-    parser.add_argument("--temporal-gap", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--temporal-gap", type=int, default=50)
+    parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--latent-dim", type=int, default=128)
     parser.add_argument("--predictor-hidden-dim", type=int, default=256)
     parser.add_argument("--z-threshold", type=float, default=3.0)
     parser.add_argument(
         "--smooth-window",
         type=int,
-        default=7,
+        default=10,
         help="rolling mean window size for MSE smoothing (1 disables)",
     )
     parser.add_argument(
